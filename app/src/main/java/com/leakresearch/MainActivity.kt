@@ -304,6 +304,8 @@ private fun LeakResearchApp(
         var fileReviewConfirmed by remember { mutableStateOf(false) }
         val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
             selectedFiles = picked
+            fileReviewConfirmed = false
+            preview = false
             picked.forEach { uri -> runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
         }
         var aiUrl by remember { mutableStateOf("") }
@@ -435,7 +437,7 @@ private fun LeakResearchApp(
                             RaisedPanel("AI CONTENT ANALYSIS") {
                                 Text("Paste mixed incident notes. AI identifies facts and fills the correct report fields. Review every extracted value before sending.",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                OutlinedTextField(value = rawNotes, onValueChange = { rawNotes = it; preview = false },
+                                OutlinedTextField(value = rawNotes, onValueChange = { rawNotes = it; preview = false; extractionReady = false },
                                     modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
                                     label = { Text("Unstructured incident content") }, minLines = 6)
                                 Button(onClick = {
@@ -444,8 +446,10 @@ private fun LeakResearchApp(
                                     aiBusy = true; aiStatus = "Analyzing incident content…"; preview = false
                                     scope.launch {
                                         try {
-                                            val result = withContext(Dispatchers.IO) { analyze(Redactor.sanitize(rawNotes)) }
-                                            fun value(key: String) = result.optString(key, "").takeIf { it != "null" }.orEmpty()
+                                            val sanitizedNotes = Redactor.sanitize(rawNotes)
+                                             require(sanitizedNotes.isNotBlank()) { "The pasted content contains no extractable text after privacy masking." }
+                                             val result = withContext(Dispatchers.IO) { analyze(sanitizedNotes) }
+                                            fun value(key: String) = Redactor.sanitize(result.optString(key, "").takeIf { it != "null" }.orEmpty())
                                             organization = value("organization"); url = value("url"); country = value("country"); sector = value("sector")
                                             discovered = value("discovered_date"); incidentDate = value("incident_date")
                                             incidentStatus = value("status"); reference = value("reference"); summary = value("summary")
@@ -734,7 +738,7 @@ private object ReportFormatter {
         }
         section("🏢", "VICTIM / ORGANIZATION INFORMATION", listOf("Organization", "URL", "Country", "Sector"))
         section("📅", "TIMELINE", listOf("Discovered", "Estimated incident date"))
-        section("📋", "INCIDENT INFORMATION", listOf("Status", "Reference", "Summary"))
+        section("📋", "INCIDENT INFORMATION", listOf("Status", "Incident type", "Reference", "Summary", "Data size", "Affected records", "File types", "Exposed data", "Deadline", "Additional facts"))
         out.append("\n──────────────\n").append(safeFooter(footer))
         return out.toString()
     }

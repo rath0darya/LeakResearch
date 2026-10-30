@@ -8,8 +8,8 @@
 LeakResearch turns unstructured incident notes into a readable Telegram HTML report. It previews the sanitized message before sending it to a configured private group and optional topic.
 
 ## Privacy and safety
-- Sensitive-looking email addresses, phone numbers, long numeric identifiers and credential-like values are masked before preview and delivery.
-- The app does not upload notes to an AI provider.
+- Sensitive-looking email addresses, phone numbers, long numeric identifiers and credential-like values are masked before AI analysis, preview and delivery. Masking is best-effort, not a guarantee; review the source and extracted fields.
+- When AI extraction is enabled, only locally masked incident text is sent to the AI endpoint you configure; review the provider's data-handling terms.
 - Telegram delivery is the only network operation initiated by the app.
 - Bot token and destination settings are stored with Android encrypted preferences.
 - Use only with information you are authorized to handle. Review every preview before sending.
