@@ -182,7 +182,16 @@ private fun LeakResearchApp(
         val drawer = rememberDrawerState(DrawerValue.Closed)
         val scope = rememberCoroutineScope()
         var screen by remember { mutableStateOf(if (initial["token"].isNullOrBlank()) Screen.SETTINGS else Screen.HOME) }
-        var raw by remember { mutableStateOf("") }
+        var title by remember { mutableStateOf("SECURITY INCIDENT REPORT") }
+        var organization by remember { mutableStateOf("") }
+        var url by remember { mutableStateOf("") }
+        var country by remember { mutableStateOf("") }
+        var sector by remember { mutableStateOf("") }
+        var discovered by remember { mutableStateOf("") }
+        var incidentDate by remember { mutableStateOf("") }
+        var incidentStatus by remember { mutableStateOf("") }
+        var reference by remember { mutableStateOf("") }
+        var summary by remember { mutableStateOf("") }
         var token by remember { mutableStateOf(initial["token"].orEmpty()) }
         var chat by remember { mutableStateOf(initial["chat"].orEmpty()) }
         var topic by remember { mutableStateOf(initial["topic"].orEmpty()) }
@@ -190,8 +199,15 @@ private fun LeakResearchApp(
         var preview by remember { mutableStateOf(false) }
         var status by remember { mutableStateOf("") }
         var busy by remember { mutableStateOf(false) }
-        val safeText = remember(raw) { Redactor.sanitize(raw) }
-        val html = remember(safeText, footer) { ReportFormatter.format(safeText, footer) }
+        val reportFields = listOf(
+            "Organization" to organization, "URL" to url, "Country" to country, "Sector" to sector,
+            "Discovered" to discovered, "Estimated incident date" to incidentDate,
+            "Status" to incidentStatus, "Reference" to reference, "Summary" to summary
+        ).map { it.first to Redactor.sanitize(it.second) }
+        val reportTitle = title.ifBlank { "SECURITY INCIDENT REPORT" }
+        val html = remember(reportTitle, reportFields, footer) { ReportFormatter.format(reportTitle, reportFields, footer) }
+        val previewText = remember(reportTitle, reportFields, footer) { ReportFormatter.plainPreview(reportTitle, reportFields, footer) }
+        val hasReport = reportFields.any { it.second.isNotBlank() }
 
         ModalNavigationDrawer(
             drawerState = drawer,
@@ -290,14 +306,29 @@ private fun LeakResearchApp(
                             }
                         }
                         Screen.COMPOSE -> {
-                            RaisedPanel("01  /  INCIDENT INPUT") {
-                                Text("Sensitive identifiers and credential-like values are masked before preview and delivery.",
+                            RaisedPanel("SECURITY INCIDENT REPORT") {
+                                Text("Enter only the incident details you want included. Each field is mapped to its own report section.",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                OutlinedTextField(value = raw, onValueChange = { raw = it; preview = false; status = "" },
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 190.dp),
-                                    placeholder = { Text("Paste incident notes…") }, minLines = 7)
+                                Field("Report title", title, { title = it; preview = false })
                             }
-                            RaisedPanel("02  /  DESTINATION") {
+                            RaisedPanel("🏢  VICTIM / ORGANIZATION INFORMATION") {
+                                Field("Organization", organization, { organization = it; preview = false })
+                                Field("URL", url, { url = it; preview = false })
+                                Field("Country", country, { country = it; preview = false })
+                                Field("Sector", sector, { sector = it; preview = false })
+                            }
+                            RaisedPanel("📅  TIMELINE") {
+                                Field("Discovered date", discovered, { discovered = it; preview = false })
+                                Field("Estimated incident date", incidentDate, { incidentDate = it; preview = false })
+                            }
+                            RaisedPanel("📋  INCIDENT INFORMATION") {
+                                Field("Status", incidentStatus, { incidentStatus = it; preview = false })
+                                Field("Reference", reference, { reference = it; preview = false })
+                                OutlinedTextField(value = summary, onValueChange = { summary = it; preview = false },
+                                    label = { Text("Summary") }, modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp),
+                                    minLines = 4)
+                            }
+                            RaisedPanel("TELEGRAM DESTINATION") {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Send, null, tint = brass)
                                     Spacer(Modifier.width(10.dp))
@@ -310,10 +341,10 @@ private fun LeakResearchApp(
                                 }
                                 TextButton(onClick = { screen = Screen.SETTINGS }) { Text("EDIT DESTINATION") }
                             }
-                            RaisedPanel("03  /  REVIEW PREVIEW") {
-                                Text(if (preview) ReportFormatter.plainPreview(safeText, footer) else "Generate a preview to inspect the sanitized report.",
+                            RaisedPanel("LIVE MESSAGE PREVIEW") {
+                                Text(if (preview) previewText else "Generate a preview to inspect exactly what will be sent.",
                                     color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
-                                Button(onClick = { preview = true; status = "" }, enabled = raw.isNotBlank(),
+                                Button(onClick = { preview = true; status = "" }, enabled = hasReport,
                                     modifier = Modifier.fillMaxWidth()) { Text("GENERATE PREVIEW") }
                             }
                             Button(onClick = {
@@ -324,7 +355,7 @@ private fun LeakResearchApp(
                                     catch (e: Exception) { "Not sent: " + (e.message ?: "Check settings and try again.") }
                                     busy = false
                                 }
-                            }, enabled = preview && !busy && raw.isNotBlank() && chat.isNotBlank(),
+                            }, enabled = preview && !busy && hasReport && chat.isNotBlank(),
                                 modifier = Modifier.fillMaxWidth().height(54.dp)) {
                                 if (busy) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
                                 else Icon(Icons.Filled.Send, null)
@@ -442,97 +473,44 @@ private object Redactor {
 }
 
 private object ReportFormatter {
-    private data class Section(val title: String, val icon: String, val values: MutableList<String> = mutableListOf())
+    private fun esc(value: String): String = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    private fun heading(value: String): String = value.uppercase()
+    private fun safeFooter(value: String): String = value.trim().ifBlank { "Indian Cyber Force" }
 
-    private val domainRegex = Regex("(?i)(?<![@/])\\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}\\b")
-    private val urlRegex = Regex("(?i)https?://[^\\s<>]+")
-    private val countdownRegex = Regex("(?i)\\b\\d+\\s*(?:d|days?)\\s+\\d+\\s*(?:h|hours?)\\s+\\d+\\s*(?:m|minutes?)\\s*(?:\\d+\\s*(?:s|seconds?))?\\b")
-    private val dateRegex = Regex("(?i)\\b(?:\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}|\\d{1,2}\\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\s+\\d{4})\\b")
-    private val boilerplate = Regex("(?i)^(?:read more|learn more|view website|visit website|share|copy link|download|subscribe|login|sign in|menu|home|search|cookie policy|privacy policy|terms of service)[.!… ]*$")
-    private val exposedTerms = Regex("(?i)\\b(?:kyc|aadhaar|pan card|passport|bank statement|bank account|financial record|loan document|loan application|customer record|crm|employee record|staff record|internal document|invoice|payment record|credit card|debit card|tax record|identity document|personal data)\\b")
-    private val statusTerms = Regex("(?i)\\b(?:status|victim status|negotiation deadline|published|pending|active|inactive|disclosed|leaked|under negotiation|notified)\\s*[:：-]")
-    private val descriptionTerms = Regex("(?i)\\b(?:description|overview|summary|about|details)\\s*[:：-]")
-    private val sizeTerms = Regex("(?i)\\b(?:size|data size|volume|total size)\\s*[:：-]")
-    private val extensionTerms = Regex("(?i)\\b(?:file types|extensions|file extensions|formats)\\s*[:：-]")
-
-    private fun clean(value: String): String = value.trim()
-        .replace(Regex("^[\\s•▪◦*\\-–—|:]+"), "")
-        .replace(Regex("[\\s|:]+$"), "")
-        .trim()
-
-    private fun add(section: Section, value: String) {
-        val item = clean(value)
-        if (item.isBlank() || boilerplate.matches(item)) return
-        if (section.values.none { it.equals(item, ignoreCase = true) }) section.values.add(item)
-    }
-
-    private fun parse(input: String): List<Section> {
-        val sections = linkedMapOf(
-            "domain" to Section("AFFECTED DOMAINS", "⌖"),
-            "url" to Section("REFERENCES", "↗"),
-            "status" to Section("STATUS", "◉"),
-            "countdown" to Section("DEADLINE COUNTDOWN", "◷"),
-            "date" to Section("DATES", "▦"),
-            "size" to Section("DATA VOLUME", "▤"),
-            "extensions" to Section("FILE TYPES", "▧"),
-            "exposed" to Section("EXPOSED DATA CATEGORIES", "▣"),
-            "description" to Section("INCIDENT DESCRIPTION", "≡"),
-            "additional" to Section("ADDITIONAL INFORMATION", "•")
-        )
-        val seenLines = mutableSetOf<String>()
-        input.lines().forEach { original ->
-            val line = clean(original)
-            if (line.isBlank() || boilerplate.matches(line)) return@forEach
-            val key = line.lowercase().replace(Regex("\\s+"), " ")
-            if (!seenLines.add(key)) return@forEach
-
-            val urls = urlRegex.findAll(line).map { it.value.trimEnd('.', ',', ')', ']', ';') }.distinct().toList()
-            urls.forEach { add(sections.getValue("url"), it) }
-
-            val domains = domainRegex.findAll(line).map { it.value.trimEnd('.', ',', ';') }
-                .filterNot { domain -> urls.any { it.contains(domain, ignoreCase = true) } }
-                .distinct().toList()
-            domains.forEach { add(sections.getValue("domain"), it) }
-
-            when {
-                countdownRegex.containsMatchIn(line) -> add(sections.getValue("countdown"), line)
-                statusTerms.containsMatchIn(line) -> add(sections.getValue("status"), line)
-                sizeTerms.containsMatchIn(line) -> add(sections.getValue("size"), line)
-                extensionTerms.containsMatchIn(line) -> add(sections.getValue("extensions"), line)
-                descriptionTerms.containsMatchIn(line) -> add(sections.getValue("description"), line)
-                exposedTerms.containsMatchIn(line) -> add(sections.getValue("exposed"), line)
-                dateRegex.containsMatchIn(line) -> add(sections.getValue("date"), line)
-                urls.isEmpty() && domains.isEmpty() -> add(sections.getValue("additional"), line)
-                else -> {
-                    val remainder = line.replace(urlRegex, "").replace(domainRegex, "").trim(' ', '-', ':', '|', '•')
-                    if (remainder.isNotBlank() && !boilerplate.matches(remainder)) add(sections.getValue("additional"), remainder)
-                }
+    fun format(title: String, fields: List<Pair<String, String>>, footer: String): String {
+        val values = fields.toMap()
+        val out = StringBuilder("<b>").append(esc(heading(title))).append("</b>\n<code>──────────────</code>")
+        fun section(icon: String, name: String, labels: List<String>) {
+            val populated = labels.mapNotNull { label -> values[label]?.takeIf { it.isNotBlank() }?.let { label to it } }
+            if (populated.isEmpty()) return
+            out.append("\n\n<b>").append(icon).append(" ").append(esc(heading(name))).append("</b>\n")
+            populated.forEach { (label, value) ->
+                out.append("• <b>").append(esc(label)).append(":</b> ")
+                if (label == "Reference") out.append("<code>").append(esc(value)).append("</code>")
+                else out.append(esc(value))
+                out.append("\n")
             }
         }
-        return sections.values.filter { it.values.isNotEmpty() }
-    }
-
-    private fun plainSections(input: String, footer: String): String {
-        val parsed = parse(input)
-        val out = StringBuilder("◆ INCIDENT INTELLIGENCE REPORT\n━━━━━━━━━━━━━━━━━━━━")
-        parsed.forEach { section ->
-            out.append("\n\n").append(section.icon).append(" ").append(section.title).append("\n")
-            section.values.forEach { out.append("• ").append(it).append("\n") }
-        }
-        if (footer.isNotBlank()) out.append("\n━━━━━━━━━━━━━━━━━━━━\n").append(footer.trim())
+        section("🏢", "VICTIM / ORGANIZATION INFORMATION", listOf("Organization", "URL", "Country", "Sector"))
+        section("📅", "TIMELINE", listOf("Discovered", "Estimated incident date"))
+        section("📋", "INCIDENT INFORMATION", listOf("Status", "Reference", "Summary"))
+        out.append("\n<code>──────────────</code>\n<b>").append(esc(safeFooter(footer))).append("</b>")
         return out.toString()
     }
 
-    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    fun format(text: String, footer: String): String {
-        val parsed = parse(text)
-        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\n<code>━━━━━━━━━━━━━━━━━━━━</code>")
-        parsed.forEach { section ->
-            out.append("\n\n<b>").append(section.icon).append(" ").append(esc(section.title)).append("</b>\n")
-            section.values.forEach { out.append("• ").append(esc(it)).append("\n") }
+    fun plainPreview(title: String, fields: List<Pair<String, String>>, footer: String): String {
+        val values = fields.toMap()
+        val out = StringBuilder(heading(title)).append("\n──────────────")
+        fun section(icon: String, name: String, labels: List<String>) {
+            val populated = labels.mapNotNull { label -> values[label]?.takeIf { it.isNotBlank() }?.let { label to it } }
+            if (populated.isEmpty()) return
+            out.append("\n\n").append(icon).append(" ").append(heading(name)).append("\n")
+            populated.forEach { (label, value) -> out.append("• ").append(label).append(": ").append(value).append("\n") }
         }
-        if (footer.isNotBlank()) out.append("\n<code>━━━━━━━━━━━━━━━━━━━━</code>\n<b>").append(esc(footer.trim())).append("</b>")
+        section("🏢", "VICTIM / ORGANIZATION INFORMATION", listOf("Organization", "URL", "Country", "Sector"))
+        section("📅", "TIMELINE", listOf("Discovered", "Estimated incident date"))
+        section("📋", "INCIDENT INFORMATION", listOf("Status", "Reference", "Summary"))
+        out.append("\n──────────────\n").append(safeFooter(footer))
         return out.toString()
     }
-    fun plainPreview(text: String, footer: String): String = plainSections(text, footer)
 }
