@@ -5,6 +5,11 @@ import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.layout.ContentScale
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -54,22 +59,66 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val configured = prefs.getBoolean("configured", false)
-        if (configured && prefs.getBoolean("biometric", true)) unlock { showApp() } else showApp()
+        if (configured) unlock() else showApp()
     }
 
-    private fun unlock(onSuccess: () -> Unit) {
+    private fun unlock() {
+        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG or
+            BiometricManager.Authenticators.DEVICE_CREDENTIAL
         val manager = BiometricManager.from(this)
-        if (manager.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL) != BiometricManager.BIOMETRIC_SUCCESS) {
-            showApp(); return
+        val availability = manager.canAuthenticate(authenticators)
+        if (availability != BiometricManager.BIOMETRIC_SUCCESS) {
+            showLockedScreen(when (availability) {
+                BiometricManager.BIOMETRIC_ERROR_NONE_ENROLLED -> "Set up a fingerprint or device screen lock to unlock LeakResearch."
+                BiometricManager.BIOMETRIC_ERROR_NO_HARDWARE -> "This device has no supported biometric hardware. Set up a secure device screen lock."
+                BiometricManager.BIOMETRIC_ERROR_HW_UNAVAILABLE -> "Biometric hardware is temporarily unavailable. Try again."
+                else -> "Device authentication is not ready. Set up device security and try again."
+            })
+            return
         }
         val prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) { onSuccess() }
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) { showApp() }
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    showApp()
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    showLockedScreen(errString.toString())
+                }
+                override fun onAuthenticationFailed() {
+                    // Keep the prompt active; an unsuccessful scan never unlocks the app.
+                }
             })
-        prompt.authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Unlock LeakResearch")
-            .setSubtitle("Authenticate to continue")
-            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL).build())
+        prompt.authenticate(BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Unlock LeakResearch")
+            .setSubtitle("Use fingerprint or your device screen-lock credential")
+            .setAllowedAuthenticators(authenticators)
+            .build())
+    }
+
+    private fun showLockedScreen(message: String) {
+        setContent {
+            MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFE1A66C), background = Color(0xFF171614), surface = Color(0xFF282521))) {
+                Column(
+                    Modifier.fillMaxSize().background(Color(0xFF171614)).padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Image(painterResource(R.drawable.app_logo), "LeakResearch logo",
+                        Modifier.size(116.dp), contentScale = ContentScale.Fit)
+                    Spacer(Modifier.height(24.dp))
+                    Text("LEAKRESEARCH", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                    Spacer(Modifier.height(12.dp))
+                    Icon(Icons.Filled.Fingerprint, null, tint = Color(0xFFE1A66C), modifier = Modifier.size(54.dp))
+                    Text("APP LOCKED", color = Color(0xFFE1A66C), fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(12.dp))
+                    Text(message, color = Color(0xFFE8DED2), style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(24.dp))
+                    Button(onClick = { unlock() }, modifier = Modifier.fillMaxWidth()) { Text("TRY AGAIN") }
+                    OutlinedButton(onClick = { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) },
+                        modifier = Modifier.fillMaxWidth()) { Text("DEVICE SECURITY SETTINGS") }
+                }
+            }
+        }
     }
 
     private fun showApp() {
@@ -153,11 +202,8 @@ private fun LeakResearchApp(
                 ) {
                     Spacer(Modifier.height(22.dp))
                     Row(Modifier.padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(48.dp).shadow(5.dp, RoundedCornerShape(15.dp))
-                            .background(Brush.linearGradient(listOf(Color(0xFFD7A16B), Color(0xFF70452A))), RoundedCornerShape(15.dp)),
-                            contentAlignment = Alignment.Center) {
-                            Icon(Icons.Filled.Shield, null, tint = Color.White, modifier = Modifier.size(28.dp))
-                        }
+                        Image(painterResource(R.drawable.app_logo), "LeakResearch logo",
+                            Modifier.size(54.dp), contentScale = ContentScale.Fit)
                         Spacer(Modifier.width(13.dp))
                         Column {
                             Text("LEAKRESEARCH", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
@@ -344,7 +390,7 @@ private fun HeroPanel(dark: Boolean) {
             else listOf(Color(0xFFD9B48D), Color(0xFF806044))), RoundedCornerShape(24.dp))
         .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(24.dp)).padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Icon(Icons.Filled.Shield, null, tint = Color(0xFFFFE6C8), modifier = Modifier.size(34.dp))
+        Image(painterResource(R.drawable.app_logo), "LeakResearch logo", Modifier.size(58.dp), contentScale = ContentScale.Fit)
         Text("INCIDENT INTELLIGENCE", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
         Text("A focused workspace for preparing, reviewing and securely delivering incident reports.",
             color = Color.White.copy(alpha = 0.88f), style = MaterialTheme.typography.bodyMedium)
