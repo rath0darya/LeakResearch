@@ -514,24 +514,24 @@ private object ReportFormatter {
 
     private fun plainSections(input: String, footer: String): String {
         val parsed = parse(input)
-        val out = StringBuilder("◆ INCIDENT INTELLIGENCE REPORT\\n━━━━━━━━━━━━━━━━━━━━")
+        val out = StringBuilder("◆ INCIDENT INTELLIGENCE REPORT\n━━━━━━━━━━━━━━━━━━━━")
         parsed.forEach { section ->
-            out.append("\\n\\n").append(section.icon).append(" ").append(section.title).append("\\n")
-            section.values.forEach { out.append("• ").append(it).append("\\n") }
+            out.append("\n\n").append(section.icon).append(" ").append(section.title).append("\n")
+            section.values.forEach { out.append("• ").append(it).append("\n") }
         }
-        if (footer.isNotBlank()) out.append("\\n━━━━━━━━━━━━━━━━━━━━\\n").append(footer.trim())
+        if (footer.isNotBlank()) out.append("\n━━━━━━━━━━━━━━━━━━━━\n").append(footer.trim())
         return out.toString()
     }
 
     private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     fun format(text: String, footer: String): String {
         val parsed = parse(text)
-        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\\n<code>━━━━━━━━━━━━━━━━━━━━</code>")
+        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\n<code>━━━━━━━━━━━━━━━━━━━━</code>")
         parsed.forEach { section ->
-            out.append("\\n\\n<b>").append(section.icon).append(" ").append(esc(section.title)).append("</b>\\n")
-            section.values.forEach { out.append("• ").append(esc(it)).append("\\n") }
+            out.append("\n\n<b>").append(section.icon).append(" ").append(esc(section.title)).append("</b>\n")
+            section.values.forEach { out.append("• ").append(esc(it)).append("\n") }
         }
-        if (footer.isNotBlank()) out.append("\\n<code>━━━━━━━━━━━━━━━━━━━━</code>\\n<b>").append(esc(footer.trim())).append("</b>")
+        if (footer.isNotBlank()) out.append("\n<code>━━━━━━━━━━━━━━━━━━━━</code>\n<b>").append(esc(footer.trim())).append("</b>")
         return out.toString()
     }
     fun plainPreview(text: String, footer: String): String = plainSections(text, footer)
