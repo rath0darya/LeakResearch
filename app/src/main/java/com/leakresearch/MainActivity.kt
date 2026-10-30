@@ -587,7 +587,7 @@ private object ReportFormatter {
         }
         section("🏢", "VICTIM / ORGANIZATION INFORMATION", listOf("Organization", "URL", "Country", "Sector"))
         section("📅", "TIMELINE", listOf("Discovered", "Estimated incident date"))
-        section("📋", "INCIDENT INFORMATION", listOf("Status", "Reference", "Summary"))
+        section("📋", "INCIDENT INFORMATION", listOf("Status", "Incident type", "Reference", "Summary", "Data size", "Affected records", "File types", "Exposed data", "Deadline", "Additional facts"))
         out.append("\n<code>──────────────</code>\n<b>").append(esc(safeFooter(footer))).append("</b>")
         return out.toString()
     }
