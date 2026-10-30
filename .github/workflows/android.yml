@@ -20,16 +20,29 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+      - name: Restore permanent release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.LEAKRESEARCH_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo "Missing LEAKRESEARCH_KEYSTORE_BASE64 repository secret"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/leakresearch-release.jks"
+          test -s "$RUNNER_TEMP/leakresearch-release.jks"
+      - name: Build signed release APK
+        env:
+          LEAKRESEARCH_KEYSTORE_PATH: ${{ runner.temp }}/leakresearch-release.jks
+          LEAKRESEARCH_KEYSTORE_PASSWORD: ${{ secrets.LEAKRESEARCH_KEYSTORE_PASSWORD }}
+          LEAKRESEARCH_KEY_ALIAS: ${{ secrets.LEAKRESEARCH_KEY_ALIAS }}
+          LEAKRESEARCH_KEY_PASSWORD: ${{ secrets.LEAKRESEARCH_KEY_PASSWORD }}
+        run: gradle --no-daemon --stacktrace :app:assembleRelease
       - name: Prepare APK and checksum
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          cp app/build/outputs/apk/debug/app-debug.apk LeakResearch.apk
+          test -s app/build/outputs/apk/release/app-release.apk
+          cp app/build/outputs/apk/release/app-release.apk LeakResearch.apk
           sha256sum LeakResearch.apk > LeakResearch.apk.sha256
+          apksigner verify --verbose --print-certs LeakResearch.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: LeakResearch-APK
+          name: LeakResearch-Signed-APK
           path: |
             LeakResearch.apk
             LeakResearch.apk.sha256
@@ -39,5 +52,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="latest"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "LeakResearch — Latest" --notes "Latest automated Android APK."
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "LeakResearch — Latest" --notes "Latest permanently signed Android APK. Install this build for future in-place updates."
           gh release upload "$TAG" LeakResearch.apk LeakResearch.apk.sha256 --clobber
