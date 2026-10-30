@@ -275,7 +275,7 @@ private fun LeakResearchApp(
     MaterialTheme(colorScheme = colors) {
         val drawer = rememberDrawerState(DrawerValue.Closed)
         val scope = rememberCoroutineScope()
-        var screen by remember { mutableStateOf(if (initial["token"].isNullOrBlank()) Screen.SETTINGS else Screen.HOME) }
+        var screen by remember { mutableStateOf(if (initial["hasTelegram"] == "true") Screen.HOME else Screen.SETTINGS) }
         var title by remember { mutableStateOf("SECURITY INCIDENT REPORT") }
         var organization by remember { mutableStateOf("") }
         var url by remember { mutableStateOf("") }
@@ -314,7 +314,7 @@ private fun LeakResearchApp(
         var aiBusy by remember { mutableStateOf(false) }
         var aiStatus by remember { mutableStateOf("") }
         var token by remember { mutableStateOf("") }
-        var chat by remember { mutableStateOf("") }
+        var chat by remember { mutableStateOf(initial["chat"] ?: "") }
         var topic by remember { mutableStateOf("") }
         var footer by remember { mutableStateOf("") }
         var preview by remember { mutableStateOf(false) }
@@ -473,7 +473,7 @@ private fun LeakResearchApp(
                                     discovered = ""; incidentDate = ""; incidentStatus = ""; reference = ""; summary = ""
                                     incidentType = ""; dataSize = ""; recordCount = ""; fileTypes = ""
                                     exposedData = ""; deadline = ""; additionalFacts = ""; rawNotes = ""
-                                    preview = false; status = ""; aiStatus = ""
+                                    preview = false; status = ""; aiStatus = ""; extractionReady = false; selectedFiles = emptyList(); fileReviewConfirmed = false
                                 }, modifier = Modifier.fillMaxWidth()) {
                                     Icon(Icons.Filled.DeleteSweep, null)
                                     Spacer(Modifier.width(8.dp))
@@ -522,23 +522,10 @@ private fun LeakResearchApp(
                                 Field("Topic ID (optional)", targetTopic, { targetTopic = it })
                                 Text("Telegram Bot API does not provide a list of forum topics. Enter the topic ID supplied by the group administrator.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            /*DESTINATION_PANEL_REPLACED*/
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.Send, null, tint = brass)
-                                    Spacer(Modifier.width(10.dp))
-                                    Column {
-                                        Text(if (chat.isBlank()) "Telegram not configured" else "Private group connected",
-                                            fontWeight = FontWeight.SemiBold)
-                                        Text(if (topic.isBlank()) "Default group destination" else "Topic ID: $topic",
-                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                TextButton(onClick = { screen = Screen.SETTINGS }) { Text("EDIT DESTINATION") }
-                            }
                             RaisedPanel("LIVE MESSAGE PREVIEW") {
-                                Text(if (preview) previewText else "Generate a preview to inspect exactly what will be sent.",
+                                Text(if (preview && deliveryMode != "Files only") previewText else if (preview) "Files-only delivery selected. No report text will be sent." else "Generate and review the report preview before delivery.",
                                     color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyMedium)
-                                Button(onClick = { preview = true; status = "" }, enabled = hasReport,
+                                Button(onClick = { preview = true; status = "" }, enabled = hasReport || (deliveryMode == "Files only" && selectedFiles.isNotEmpty()),
                                     modifier = Modifier.fillMaxWidth()) { Text("GENERATE PREVIEW") }
                             }
                             Button(onClick = {
@@ -556,7 +543,7 @@ private fun LeakResearchApp(
                                 Spacer(Modifier.width(9.dp)); Text(if (busy) "SENDING…" else "SEND REPORT")
                             }
                             if (status.isNotBlank()) RaisedPanel("DELIVERY RESULT") {
-                                Text(status, color = if (status.startsWith("Report sent")) Color(0xFF2E8B57) else MaterialTheme.colorScheme.error,
+                                Text(status, color = if (status.contains("successfully")) Color(0xFF2E8B57) else MaterialTheme.colorScheme.error,
                                     fontWeight = FontWeight.SemiBold)
                             }
                         }
