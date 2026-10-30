@@ -1,6 +1,13 @@
 package com.leakresearch
 
 import android.os.Bundle
+import android.net.Uri
+import android.database.Cursor
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import okhttp3.MultipartBody
+import okhttp3.RequestBody
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
@@ -131,7 +138,8 @@ class MainActivity : FragmentActivity() {
                 initial = mapOf(
                     "hasTelegram" to (!prefs.getString("token", "").isNullOrBlank() && !prefs.getString("chat", "").isNullOrBlank()).toString(),
                     "hasAi" to (!prefs.getString("aiKey", "").isNullOrBlank()).toString(),
-                    "theme" to prefs.getString("theme", "system").orEmpty()
+                    "theme" to prefs.getString("theme", "system").orEmpty(),
+                    "chat" to prefs.getString("chat", "").orEmpty(), "topic" to prefs.getString("topic", "").orEmpty()
                 ),
                 save = { token, chat, topic, footer ->
                     val edit = prefs.edit()
@@ -154,7 +162,7 @@ class MainActivity : FragmentActivity() {
                     analyzeWithAi(notes, prefs.getString("aiUrl", "https://api.openai.com/v1/chat/completions").orEmpty(),
                         prefs.getString("aiKey", "").orEmpty(), prefs.getString("aiModel", "gpt-4.1-mini").orEmpty())
                 },
-                send = { html -> sendTelegram(html) }
+                send = { html, mode, targetChat, targetTopic, files -> sendTelegram(html, mode, targetChat, targetTopic, files) }
             )
         }
     }
@@ -205,23 +213,40 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun sendTelegram(html: String): String {
+    private fun sendTelegram(html: String, mode: String, targetChat: String, targetTopic: String, files: List<Uri>): String {
         val token = prefs.getString("token", "").orEmpty()
-        val chat = prefs.getString("chat", "").orEmpty()
-        val topic = prefs.getString("topic", "").orEmpty()
-        require(token.isNotBlank() && chat.isNotBlank()) { "Complete Telegram setup in Settings." }
-        val payload = JSONObject().put("chat_id", chat).put("text", html)
-            .put("parse_mode", "HTML").put("disable_web_page_preview", true)
-        if (topic.isNotBlank()) payload.put("message_thread_id", topic.toLongOrNull() ?: error("Topic ID must be numeric."))
-        val request = Request.Builder().url("https://api.telegram.org/bot$token/sendMessage")
-            .post(payload.toString().toRequestBody("application/json".toMediaType())).build()
-        http.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            val json = runCatching { JSONObject(body) }.getOrNull()
-            if (!response.isSuccessful || json?.optBoolean("ok") != true)
-                throw IllegalStateException(json?.optString("description")?.takeIf { it.isNotBlank() } ?: "Telegram delivery failed.")
-            return "Report sent successfully."
+        val chat = targetChat.trim()
+        val topic = targetTopic.trim()
+        require(token.isNotBlank() && chat.isNotBlank()) { "Complete Telegram bot configuration in Settings." }
+        require(mode != "Data only" || html.isNotBlank()) { "There is no report text to send." }
+        require(mode != "Files only" || files.isNotEmpty()) { "Select at least one attachment." }
+        require(mode != "Data + files" || (html.isNotBlank() && files.isNotEmpty())) { "Add report data and at least one attachment." }
+        fun check(jsonText: String, responseCode: Int) {
+            val json = runCatching { JSONObject(jsonText) }.getOrNull()
+            if (responseCode !in 200..299 || json?.optBoolean("ok") != true)
+                throw IllegalStateException(json?.optString("description")?.takeIf { it.isNotBlank() } ?: "Telegram delivery failed (HTTP $responseCode).")
         }
+        fun destination(builder: MultipartBody.Builder) {
+            builder.addFormDataPart("chat_id", chat)
+            if (topic.isNotBlank()) builder.addFormDataPart("message_thread_id", topic.toLongOrNull()?.toString() ?: error("Topic ID must be numeric."))
+        }
+        if (mode != "Files only") {
+            val payload = JSONObject().put("chat_id", chat).put("text", html).put("parse_mode", "HTML").put("disable_web_page_preview", true)
+            if (topic.isNotBlank()) payload.put("message_thread_id", topic.toLongOrNull() ?: error("Topic ID must be numeric."))
+            http.newCall(Request.Builder().url("https://api.telegram.org/bot$token/sendMessage").post(payload.toString().toRequestBody("application/json".toMediaType())).build()).execute().use { check(it.body?.string().orEmpty(), it.code) }
+        }
+        if (mode != "Data only") files.forEach { uri ->
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Could not read a selected attachment.")
+            require(bytes.isNotEmpty() && bytes.size <= 49 * 1024 * 1024) { "Each attachment must be non-empty and under 49 MB." }
+            var name = "evidence"
+            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor -> if (cursor.moveToFirst()) name = cursor.getString(0) ?: name }
+            val mime = contentResolver.getType(uri) ?: "application/octet-stream"
+            val body = MultipartBody.Builder().setType(MultipartBody.FORM)
+            destination(body)
+            body.addFormDataPart("document", name, bytes.toRequestBody(mime.toMediaType()))
+            http.newCall(Request.Builder().url("https://api.telegram.org/bot$token/sendDocument").post(body.build()).build()).execute().use { check(it.body?.string().orEmpty(), it.code) }
+        }
+        return when (mode) { "Data only" -> "Report text sent successfully."; "Files only" -> "${files.size} attachment(s) sent successfully."; else -> "Report text and ${files.size} attachment(s) sent successfully." }
     }
 }
 
@@ -236,7 +261,7 @@ private fun LeakResearchApp(
     saveAi: (String, String, String) -> Unit,
     authorize: suspend () -> Boolean,
     analyze: suspend (String) -> JSONObject,
-    send: suspend (String) -> String
+    send: suspend (String, String, String, String, List<Uri>) -> String
 ) {
     var themeMode by remember { mutableStateOf(initial["theme"] ?: "system") }
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
@@ -269,6 +294,16 @@ private fun LeakResearchApp(
         var deadline by remember { mutableStateOf("") }
         var additionalFacts by remember { mutableStateOf("") }
         var rawNotes by remember { mutableStateOf("") }
+        var extractionReady by remember { mutableStateOf(false) }
+        var selectedFiles by remember { mutableStateOf<List<Uri>>(emptyList()) }
+        var deliveryMode by remember { mutableStateOf("Data only") }
+        var targetChat by remember { mutableStateOf(initial["chat"] ?: "") }
+        var targetTopic by remember { mutableStateOf(initial["topic"] ?: "") }
+        var fileReviewConfirmed by remember { mutableStateOf(false) }
+        val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
+            selectedFiles = picked
+            picked.forEach { uri -> runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+        }
         var aiUrl by remember { mutableStateOf("") }
         var aiKey by remember { mutableStateOf("") }
         var aiModel by remember { mutableStateOf("") }
@@ -415,6 +450,7 @@ private fun LeakResearchApp(
                                             incidentType = value("incident_type"); dataSize = value("data_size"); recordCount = value("record_count")
                                             fileTypes = value("file_types"); exposedData = value("exposed_data"); deadline = value("deadline")
                                             additionalFacts = value("additional_facts")
+                                            extractionReady = true
                                             aiStatus = "Analysis complete. Review and correct the extracted fields below."
                                         } catch (e: Exception) {
                                             aiStatus = "AI analysis failed: " + (e.message ?: "Check provider settings.")
@@ -427,9 +463,9 @@ private fun LeakResearchApp(
                                 }
                                 if (aiStatus.isNotBlank()) Text(aiStatus, color = if (aiStatus.startsWith("Analysis complete")) Color(0xFF2E8B57) else MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            RaisedPanel("SECURITY INCIDENT REPORT") {
-                                Text("Enter only the incident details you want included. Each field is mapped to its own report section.",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (extractionReady) {
+                            RaisedPanel("EXTRACTED REPORT — REVIEW & CORRECT") {
+                                Text("Only facts found in the supplied material are populated. Unknown details remain blank.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Field("Report title", title, { title = it; preview = false })
                                 OutlinedButton(onClick = {
                                     title = "SECURITY INCIDENT REPORT"
@@ -468,7 +504,25 @@ private fun LeakResearchApp(
                                     label = { Text("Summary") }, modifier = Modifier.fillMaxWidth().heightIn(min = 110.dp),
                                     minLines = 4)
                             }
-                            RaisedPanel("TELEGRAM DESTINATION") {
+                            }
+                            RaisedPanel("EVIDENCE ATTACHMENTS") {
+                                Text("Select multiple files. Review and redact personal, financial and identity information before sending; files are transmitted as selected.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                OutlinedButton(onClick = { filePicker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Filled.AttachFile, null); Spacer(Modifier.width(8.dp)); Text("SELECT FILES") }
+                                selectedFiles.forEachIndexed { index, uri -> Text("${index + 1}. " + (uri.lastPathSegment ?: "Attachment"), style = MaterialTheme.typography.bodySmall) }
+                                if (selectedFiles.isNotEmpty()) OutlinedButton(onClick = { selectedFiles = emptyList(); fileReviewConfirmed = false }, modifier = Modifier.fillMaxWidth()) { Text("REMOVE ALL FILES") }
+                                if (selectedFiles.isNotEmpty()) Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Checkbox(checked = fileReviewConfirmed, onCheckedChange = { fileReviewConfirmed = it })
+                                    Text("I reviewed these files and confirmed they contain no unredacted personal, financial or identity data.", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            RaisedPanel("TELEGRAM DELIVERY") {
+                                Text("Choose what to send. Group and topic can be changed for each delivery.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                listOf("Data only", "Files only", "Data + files").forEach { option -> Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = deliveryMode == option, onClick = { deliveryMode = option }); Text(option) } }
+                                Field("Private group Chat ID", targetChat, { targetChat = it })
+                                Field("Topic ID (optional)", targetTopic, { targetTopic = it })
+                                Text("Telegram Bot API does not provide a list of forum topics. Enter the topic ID supplied by the group administrator.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            /*DESTINATION_PANEL_REPLACED*/
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Filled.Send, null, tint = brass)
                                     Spacer(Modifier.width(10.dp))
@@ -491,11 +545,11 @@ private fun LeakResearchApp(
                                 if (!preview) { status = "Generate and review the preview first."; return@Button }
                                 busy = true; status = ""
                                 scope.launch {
-                                    status = try { withContext(Dispatchers.IO) { send(html) } }
+                                    status = try { withContext(Dispatchers.IO) { send(html, deliveryMode, targetChat, targetTopic, selectedFiles) } }
                                     catch (e: Exception) { "Not sent: " + (e.message ?: "Check settings and try again.") }
                                     busy = false
                                 }
-                            }, enabled = preview && !busy && hasReport && chat.isNotBlank(),
+                            }, enabled = preview && !busy && targetChat.isNotBlank() && (deliveryMode == "Files only" && selectedFiles.isNotEmpty() || deliveryMode == "Data only" && hasReport || deliveryMode == "Data + files" && hasReport && selectedFiles.isNotEmpty()) && (selectedFiles.isEmpty() || fileReviewConfirmed),
                                 modifier = Modifier.fillMaxWidth().height(54.dp)) {
                                 if (busy) CircularProgressIndicator(Modifier.size(19.dp), strokeWidth = 2.dp)
                                 else Icon(Icons.Filled.Send, null)
