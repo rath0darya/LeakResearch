@@ -20,37 +20,60 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Restore permanent release keystore
+      - name: Detect permanent signing configuration
+        id: signing
         env:
           KEYSTORE_BASE64: ${{ secrets.LEAKRESEARCH_KEYSTORE_BASE64 }}
         run: |
-          test -n "$KEYSTORE_BASE64" || { echo "Missing LEAKRESEARCH_KEYSTORE_BASE64 repository secret"; exit 1; }
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/leakresearch-release.jks"
-          test -s "$RUNNER_TEMP/leakresearch-release.jks"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/leakresearch-release.jks"
+            test -s "$RUNNER_TEMP/leakresearch-release.jks"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Permanent signing secrets are not configured. Building a debug APK for CI validation only; no update-safe release will be published."
+          fi
       - name: Build signed release APK
+        if: steps.signing.outputs.available == 'true'
         env:
           LEAKRESEARCH_KEYSTORE_PATH: ${{ runner.temp }}/leakresearch-release.jks
           LEAKRESEARCH_KEYSTORE_PASSWORD: ${{ secrets.LEAKRESEARCH_KEYSTORE_PASSWORD }}
           LEAKRESEARCH_KEY_ALIAS: ${{ secrets.LEAKRESEARCH_KEY_ALIAS }}
           LEAKRESEARCH_KEY_PASSWORD: ${{ secrets.LEAKRESEARCH_KEY_PASSWORD }}
         run: gradle --no-daemon --stacktrace :app:assembleRelease
+      - name: Build debug APK for validation
+        if: steps.signing.outputs.available != 'true'
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
       - name: Prepare APK and checksum
         run: |
-          test -s app/build/outputs/apk/release/app-release.apk
-          cp app/build/outputs/apk/release/app-release.apk LeakResearch.apk
+          if [ "${{ steps.signing.outputs.available }}" = "true" ]; then
+            APK="app/build/outputs/apk/release/app-release.apk"
+          else
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+          fi
+          test -s "$APK"
+          cp "$APK" LeakResearch.apk
           sha256sum LeakResearch.apk > LeakResearch.apk.sha256
-          apksigner verify --verbose --print-certs LeakResearch.apk
+          if [ "${{ steps.signing.outputs.available }}" = "true" ]; then
+            apksigner verify --verbose --print-certs LeakResearch.apk
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: LeakResearch-Signed-APK
+          name: LeakResearch-APK
           path: |
             LeakResearch.apk
             LeakResearch.apk.sha256
           if-no-files-found: error
-      - name: Publish or replace latest release
+      - name: Publish update-safe latest release
+        if: steps.signing.outputs.available == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="latest"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "LeakResearch — Latest" --notes "Latest permanently signed Android APK. Install this build for future in-place updates."
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "LeakResearch — Latest" --notes "Latest permanently signed Android APK. Future updates use the same signing identity."
           gh release upload "$TAG" LeakResearch.apk LeakResearch.apk.sha256 --clobber
+      - name: Explain signing setup
+        if: steps.signing.outputs.available != 'true'
+        run: |
+          echo "## APK built; permanent signing still needs setup" >> "$GITHUB_STEP_SUMMARY"
+          echo "The debug APK is available as a workflow artifact for testing. Add the four LEAKRESEARCH_* repository secrets before publishing an update-safe APK to Releases." >> "$GITHUB_STEP_SUMMARY"
