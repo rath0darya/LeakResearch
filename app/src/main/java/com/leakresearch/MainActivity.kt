@@ -16,6 +16,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -124,24 +128,58 @@ class MainActivity : FragmentActivity() {
     private fun showApp() {
         setContent {
             LeakResearchApp(
-                initial = mapOf("token" to prefs.getString("token", "").orEmpty(),
-                    "chat" to prefs.getString("chat", "").orEmpty(),
-                    "topic" to prefs.getString("topic", "").orEmpty(),
-                    "footer" to prefs.getString("footer", "Indian Cyber Force").orEmpty(),
-                    "theme" to prefs.getString("theme", "system").orEmpty(),
-                    "aiUrl" to prefs.getString("aiUrl", "https://api.openai.com/v1/chat/completions").orEmpty(),
-                    "aiKey" to prefs.getString("aiKey", "").orEmpty(),
-                    "aiModel" to prefs.getString("aiModel", "gpt-4.1-mini").orEmpty()),
+                initial = mapOf(
+                    "hasTelegram" to (!prefs.getString("token", "").isNullOrBlank() && !prefs.getString("chat", "").isNullOrBlank()).toString(),
+                    "hasAi" to (!prefs.getString("aiKey", "").isNullOrBlank()).toString(),
+                    "theme" to prefs.getString("theme", "system").orEmpty()
+                ),
                 save = { token, chat, topic, footer ->
-                    prefs.edit().putString("token", token).putString("chat", chat)
-                        .putString("topic", topic).putString("footer", footer).putBoolean("configured", true).apply()
+                    val edit = prefs.edit()
+                    if (token.isNotBlank()) edit.putString("token", token)
+                    if (chat.isNotBlank()) edit.putString("chat", chat)
+                    if (topic.isNotBlank()) edit.putString("topic", topic)
+                    if (footer.isNotBlank()) edit.putString("footer", footer)
+                    edit.putBoolean("configured", true).apply()
                 },
                 saveTheme = { prefs.edit().putString("theme", it).apply() },
-                saveAi = { url, key, model -> prefs.edit().putString("aiUrl", url).putString("aiKey", key).putString("aiModel", model).apply() },
-                analyze = { notes, endpoint, key, model -> analyzeWithAi(notes, endpoint, key, model) },
+                saveAi = { url, key, model ->
+                    val edit = prefs.edit()
+                    if (url.isNotBlank()) edit.putString("aiUrl", url)
+                    if (key.isNotBlank()) edit.putString("aiKey", key)
+                    if (model.isNotBlank()) edit.putString("aiModel", model)
+                    edit.apply()
+                },
+                authorize = { authorizeSensitiveChange() },
+                analyze = { notes ->
+                    analyzeWithAi(notes, prefs.getString("aiUrl", "https://api.openai.com/v1/chat/completions").orEmpty(),
+                        prefs.getString("aiKey", "").orEmpty(), prefs.getString("aiModel", "gpt-4.1-mini").orEmpty())
+                },
                 send = { html -> sendTelegram(html) }
             )
         }
+    }
+
+    private suspend fun authorizeSensitiveChange(): Boolean = suspendCancellableCoroutine { continuation ->
+        val authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
+        if (BiometricManager.from(this).canAuthenticate(authenticators) != BiometricManager.BIOMETRIC_SUCCESS) {
+            continuation.resume(false)
+            return@suspendCancellableCoroutine
+        }
+        val prompt = BiometricPrompt(this, ContextCompat.getMainExecutor(this),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (continuation.isActive) continuation.resume(true)
+                }
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
+                override fun onAuthenticationFailed() { }
+            })
+        prompt.authenticate(BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Authorize configuration changes")
+            .setSubtitle("Fingerprint authentication is required")
+            .setAllowedAuthenticators(authenticators)
+            .setNegativeButtonText("Cancel").build())
     }
 
     private fun analyzeWithAi(notes: String, endpoint: String, apiKey: String, model: String): JSONObject {
@@ -156,7 +194,7 @@ class MainActivity : FragmentActivity() {
             .put("response_format", JSONObject().put("type", "json_object")).put("messages", messages)
         val request = Request.Builder().url(endpoint).header("Authorization", "Bearer $apiKey")
             .post(payload.toString().toRequestBody("application/json".toMediaType())).build()
-        http.newCall(request).execute().use { response ->
+        return http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             val json = runCatching { JSONObject(body) }.getOrNull()
             if (!response.isSuccessful) throw IllegalStateException(json?.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() } ?: "AI request failed (HTTP " + response.code + ").")
@@ -196,7 +234,8 @@ private fun LeakResearchApp(
     save: (String, String, String, String) -> Unit,
     saveTheme: (String) -> Unit,
     saveAi: (String, String, String) -> Unit,
-    analyze: suspend (String, String, String, String) -> JSONObject,
+    authorize: suspend () -> Boolean,
+    analyze: suspend (String) -> JSONObject,
     send: suspend (String) -> String
 ) {
     var themeMode by remember { mutableStateOf(initial["theme"] ?: "system") }
@@ -230,15 +269,19 @@ private fun LeakResearchApp(
         var deadline by remember { mutableStateOf("") }
         var additionalFacts by remember { mutableStateOf("") }
         var rawNotes by remember { mutableStateOf("") }
-        var aiUrl by remember { mutableStateOf(initial["aiUrl"].orEmpty()) }
-        var aiKey by remember { mutableStateOf(initial["aiKey"].orEmpty()) }
-        var aiModel by remember { mutableStateOf(initial["aiModel"].orEmpty()) }
+        var aiUrl by remember { mutableStateOf("") }
+        var aiKey by remember { mutableStateOf("") }
+        var aiModel by remember { mutableStateOf("") }
+        val hasAiConfig = initial["hasAi"] == "true"
+        val hasTelegramConfig = initial["hasTelegram"] == "true"
+        var configEditAuthorized by remember { mutableStateOf(!hasAiConfig && !hasTelegramConfig) }
+        var configAuthMessage by remember { mutableStateOf("") }
         var aiBusy by remember { mutableStateOf(false) }
         var aiStatus by remember { mutableStateOf("") }
-        var token by remember { mutableStateOf(initial["token"].orEmpty()) }
-        var chat by remember { mutableStateOf(initial["chat"].orEmpty()) }
-        var topic by remember { mutableStateOf(initial["topic"].orEmpty()) }
-        var footer by remember { mutableStateOf(initial["footer"].orEmpty()) }
+        var token by remember { mutableStateOf("") }
+        var chat by remember { mutableStateOf("") }
+        var topic by remember { mutableStateOf("") }
+        var footer by remember { mutableStateOf("") }
         var preview by remember { mutableStateOf(false) }
         var status by remember { mutableStateOf("") }
         var busy by remember { mutableStateOf(false) }
@@ -360,11 +403,11 @@ private fun LeakResearchApp(
                                     label = { Text("Unstructured incident content") }, minLines = 6)
                                 Button(onClick = {
                                     if (rawNotes.isBlank()) { aiStatus = "Paste incident content first."; return@Button }
-                                    if (aiKey.isBlank()) { aiStatus = "Configure an AI provider in Settings first."; return@Button }
+                                    if (!hasAiConfig) { aiStatus = "Configure an AI provider in Settings first."; return@Button }
                                     aiBusy = true; aiStatus = "Analyzing incident content…"; preview = false
                                     scope.launch {
                                         try {
-                                            val result = withContext(Dispatchers.IO) { analyze(Redactor.sanitize(rawNotes), aiUrl.trim(), aiKey.trim(), aiModel.trim()) }
+                                            val result = withContext(Dispatchers.IO) { analyze(Redactor.sanitize(rawNotes)) }
                                             fun value(key: String) = result.optString(key, "").takeIf { it != "null" }.orEmpty()
                                             organization = value("organization"); url = value("url"); country = value("country"); sector = value("sector")
                                             discovered = value("discovered_date"); incidentDate = value("incident_date")
