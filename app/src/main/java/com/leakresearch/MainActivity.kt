@@ -31,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -263,6 +264,7 @@ private fun LeakResearchApp(
     analyze: suspend (String) -> JSONObject,
     send: suspend (String, String, String, String, List<Uri>) -> String
 ) {
+    val context = LocalContext.current
     var themeMode by remember { mutableStateOf(initial["theme"] ?: "system") }
     val systemDark = androidx.compose.foundation.isSystemInDarkTheme()
     val dark = when (themeMode) { "dark" -> true; "light" -> false; else -> systemDark }
@@ -302,7 +304,7 @@ private fun LeakResearchApp(
         var fileReviewConfirmed by remember { mutableStateOf(false) }
         val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { picked ->
             selectedFiles = picked
-            picked.forEach { uri -> runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+            picked.forEach { uri -> runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
         }
         var aiUrl by remember { mutableStateOf("") }
         var aiKey by remember { mutableStateOf("") }
