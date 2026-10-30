@@ -108,7 +108,7 @@ class MainActivity : FragmentActivity() {
                     verticalArrangement = Arrangement.Center
                 ) {
                     Image(painterResource(R.drawable.app_logo), "LeakResearch logo",
-                        Modifier.size(116.dp), contentScale = ContentScale.Fit)
+                        Modifier.size(116.dp).clip(CircleShape).border(1.dp, brass.copy(alpha = 0.7f), CircleShape), contentScale = ContentScale.Crop)
                     Spacer(Modifier.height(24.dp))
                     Text("LEAKRESEARCH", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                     Spacer(Modifier.height(12.dp))
@@ -308,7 +308,7 @@ private fun LeakResearchApp(
                     Spacer(Modifier.height(22.dp))
                     Row(Modifier.padding(horizontal = 22.dp), verticalAlignment = Alignment.CenterVertically) {
                         Image(painterResource(R.drawable.app_logo), "LeakResearch logo",
-                            Modifier.size(54.dp), contentScale = ContentScale.Fit)
+                            Modifier.size(54.dp).clip(CircleShape).border(1.dp, brass.copy(alpha = 0.7f), CircleShape), contentScale = ContentScale.Crop)
                         Spacer(Modifier.width(13.dp))
                         Column {
                             Text("LEAKRESEARCH", fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
@@ -431,6 +431,18 @@ private fun LeakResearchApp(
                                 Text("Enter only the incident details you want included. Each field is mapped to its own report section.",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Field("Report title", title, { title = it; preview = false })
+                                OutlinedButton(onClick = {
+                                    title = "SECURITY INCIDENT REPORT"
+                                    organization = ""; url = ""; country = ""; sector = ""
+                                    discovered = ""; incidentDate = ""; incidentStatus = ""; reference = ""; summary = ""
+                                    incidentType = ""; dataSize = ""; recordCount = ""; fileTypes = ""
+                                    exposedData = ""; deadline = ""; additionalFacts = ""; rawNotes = ""
+                                    preview = false; status = ""; aiStatus = ""
+                                }, modifier = Modifier.fillMaxWidth()) {
+                                    Icon(Icons.Filled.DeleteSweep, null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("CLEAR REPORT")
+                                }
                             }
                             RaisedPanel("🏢  VICTIM / ORGANIZATION INFORMATION") {
                                 Field("Organization", organization, { organization = it; preview = false })
@@ -495,25 +507,58 @@ private fun LeakResearchApp(
                             }
                         }
                         Screen.SETTINGS -> {
-                            RaisedPanel("TELEGRAM CONNECTION") {
-                                Field("Bot token", token, { token = it }, true)
-                                Field("Private group Chat ID", chat, { chat = it })
-                                Field("Topic ID (optional)", topic, { topic = it })
-                                Field("Report footer", footer, { footer = it })
-                                Text("Credentials are stored in encrypted app preferences on this device.",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Button(onClick = { save(token.trim(), chat.trim(), topic.trim(), footer.trim()); status = "Settings saved." },
-                                    modifier = Modifier.fillMaxWidth()) { Text("SAVE CONNECTION") }
-                                if (status.isNotBlank()) Text(status, color = MaterialTheme.colorScheme.primary)
+                            if (!configEditAuthorized) {
+                                RaisedPanel("CONFIGURATION PRIVACY") {
+                                    Text("Saved Telegram and AI configuration is never displayed, including to administrators. Values are stored encrypted on this device. Fingerprint authorization is required before changing saved settings.",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Telegram: " + if (hasTelegramConfig) "Configured • hidden" else "Not configured", fontWeight = FontWeight.SemiBold)
+                                    Text("AI provider: " + if (hasAiConfig) "Configured • hidden" else "Not configured", fontWeight = FontWeight.SemiBold)
+                                    Button(onClick = {
+                                        scope.launch {
+                                            configAuthMessage = "Waiting for fingerprint authorization…"
+                                            if (authorize()) {
+                                                configEditAuthorized = true
+                                                configAuthMessage = "Authorized. Enter only values you want to change; leave other fields blank."
+                                            } else {
+                                                configAuthMessage = "Fingerprint authorization failed or was cancelled. No changes allowed."
+                                            }
+                                        }
+                                    }, modifier = Modifier.fillMaxWidth()) {
+                                        Icon(Icons.Filled.Fingerprint, null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("AUTHORIZE CONFIGURATION EDIT")
+                                    }
+                                    if (configAuthMessage.isNotBlank()) Text(configAuthMessage, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
-                            RaisedPanel("AI ANALYSIS PROVIDER") {
-                                Text("AI analysis sends redacted incident text to the provider you configure. Use a provider and account you trust. Review extracted facts before sending to Telegram.",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Field("Chat Completions HTTPS endpoint", aiUrl, { aiUrl = it })
-                                Field("API key", aiKey, { aiKey = it }, true)
-                                Field("Model name", aiModel, { aiModel = it })
-                                Button(onClick = { saveAi(aiUrl.trim(), aiKey.trim(), aiModel.trim()); aiStatus = "AI provider settings saved securely." },
-                                    modifier = Modifier.fillMaxWidth()) { Text("SAVE AI SETTINGS") }
+                            if (configEditAuthorized) {
+                                RaisedPanel("TELEGRAM CONNECTION") {
+                                    Text("Saved values are hidden. Leave a field blank to keep its existing value.",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Field("New bot token", token, { token = it }, true)
+                                    Field("New private group Chat ID", chat, { chat = it })
+                                    Field("New topic ID (optional)", topic, { topic = it })
+                                    Field("New report footer", footer, { footer = it })
+                                    Button(onClick = {
+                                        save(token.trim(), chat.trim(), topic.trim(), footer.trim())
+                                        token = ""; chat = ""; topic = ""; footer = ""
+                                        configEditAuthorized = false
+                                        status = "Configuration saved. Saved values remain hidden."
+                                    }, modifier = Modifier.fillMaxWidth()) { Text("SAVE TELEGRAM CONFIGURATION") }
+                                }
+                                RaisedPanel("AI ANALYSIS PROVIDER") {
+                                    Text("Saved values are hidden. Leave a field blank to keep its existing value. AI receives redacted incident text only.",
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Field("New HTTPS endpoint", aiUrl, { aiUrl = it })
+                                    Field("New API key", aiKey, { aiKey = it }, true)
+                                    Field("New model name", aiModel, { aiModel = it })
+                                    Button(onClick = {
+                                        saveAi(aiUrl.trim(), aiKey.trim(), aiModel.trim())
+                                        aiUrl = ""; aiKey = ""; aiModel = ""
+                                        configEditAuthorized = false
+                                        aiStatus = "AI configuration saved. Saved values remain hidden."
+                                    }, modifier = Modifier.fillMaxWidth()) { Text("SAVE AI CONFIGURATION") }
+                                }
                             }
                             RaisedPanel("APPEARANCE") {
                                 Text("Theme mode", fontWeight = FontWeight.SemiBold)
@@ -558,7 +603,7 @@ private fun HeroPanel(dark: Boolean) {
             else listOf(Color(0xFFD9B48D), Color(0xFF806044))), RoundedCornerShape(24.dp))
         .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(24.dp)).padding(22.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        Image(painterResource(R.drawable.app_logo), "LeakResearch logo", Modifier.size(58.dp), contentScale = ContentScale.Fit)
+        Image(painterResource(R.drawable.app_logo), "LeakResearch logo", Modifier.size(58.dp).clip(CircleShape).border(1.dp, brass.copy(alpha = 0.7f), CircleShape), contentScale = ContentScale.Crop)
         Text("INCIDENT INTELLIGENCE", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black)
         Text("A focused workspace for preparing, reviewing and securely delivering incident reports.",
             color = Color.White.copy(alpha = 0.88f), style = MaterialTheme.typography.bodyMedium)
