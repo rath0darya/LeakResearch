@@ -112,6 +112,7 @@ class MainActivity : FragmentActivity() {
 
 private enum class Screen(val label: String) { HOME("Overview"), COMPOSE("Report composer"), SETTINGS("Settings"), ABOUT("About") }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LeakResearchApp(
     initial: Map<String, String>,
