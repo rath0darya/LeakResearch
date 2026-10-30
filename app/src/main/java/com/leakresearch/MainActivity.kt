@@ -401,14 +401,14 @@ private object ReportFormatter {
         val lines = text.lines().filter { it.isNotBlank() }
         val domains = Regex("(?i)\\b(?:[a-z0-9-]+\\.)+[a-z]{2,}\\b").findAll(text).map { it.value }.distinct().toList()
         val urls = Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE).findAll(text).map { it.value }.distinct().toList()
-        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\\n<code>━━━━━━━━━━━━━━━━━━━━</code>\\n")
-        if (domains.isNotEmpty()) out.append("<b>⌖ AFFECTED DOMAINS</b>\\n").append(domains.joinToString("\\n") { "• <code>${esc(it)}</code>" }).append("\\n\\n")
-        if (urls.isNotEmpty()) out.append("<b>↗ REFERENCES</b>\\n").append(urls.joinToString("\\n") { "• ${esc(it)}" }).append("\\n\\n")
-        out.append("<b>▤ INCIDENT DETAILS</b>\\n").append(esc(lines.joinToString("\\n"))).append("\\n")
-        if (footer.isNotBlank()) out.append("\\n<code>━━━━━━━━━━━━━━━━━━━━</code>\\n<b>").append(esc(footer)).append("</b>")
+        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\n<code>━━━━━━━━━━━━━━━━━━━━</code>\n")
+        if (domains.isNotEmpty()) out.append("<b>⌖ AFFECTED DOMAINS</b>\n").append(domains.joinToString("\n") { "• <code>${esc(it)}</code>" }).append("\n\n")
+        if (urls.isNotEmpty()) out.append("<b>↗ REFERENCES</b>\n").append(urls.joinToString("\n") { "• ${esc(it)}" }).append("\n\n")
+        out.append("<b>▤ INCIDENT DETAILS</b>\n").append(esc(lines.joinToString("\n"))).append("\n")
+        if (footer.isNotBlank()) out.append("\n<code>━━━━━━━━━━━━━━━━━━━━</code>\n<b>").append(esc(footer)).append("</b>")
         return out.toString()
     }
     fun plainPreview(text: String, footer: String): String =
-        "◆ INCIDENT INTELLIGENCE REPORT\\n━━━━━━━━━━━━━━━━━━━━\\n" + text +
-            if (footer.isBlank()) "" else "\\n━━━━━━━━━━━━━━━━━━━━\\n$footer"
+        "◆ INCIDENT INTELLIGENCE REPORT\n━━━━━━━━━━━━━━━━━━━━\n" + text +
+            if (footer.isBlank()) "" else "\n━━━━━━━━━━━━━━━━━━━━\n$footer"
 }
