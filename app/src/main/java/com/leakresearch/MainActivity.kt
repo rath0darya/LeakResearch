@@ -442,19 +442,97 @@ private object Redactor {
 }
 
 private object ReportFormatter {
-    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    fun format(text: String, footer: String): String {
-        val lines = text.lines().filter { it.isNotBlank() }
-        val domains = Regex("(?i)\\b(?:[a-z0-9-]+\\.)+[a-z]{2,}\\b").findAll(text).map { it.value }.distinct().toList()
-        val urls = Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE).findAll(text).map { it.value }.distinct().toList()
-        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\n<code>━━━━━━━━━━━━━━━━━━━━</code>\n")
-        if (domains.isNotEmpty()) out.append("<b>⌖ AFFECTED DOMAINS</b>\n").append(domains.joinToString("\n") { "• <code>${esc(it)}</code>" }).append("\n\n")
-        if (urls.isNotEmpty()) out.append("<b>↗ REFERENCES</b>\n").append(urls.joinToString("\n") { "• ${esc(it)}" }).append("\n\n")
-        out.append("<b>▤ INCIDENT DETAILS</b>\n").append(esc(lines.joinToString("\n"))).append("\n")
-        if (footer.isNotBlank()) out.append("\n<code>━━━━━━━━━━━━━━━━━━━━</code>\n<b>").append(esc(footer)).append("</b>")
+    private data class Section(val title: String, val icon: String, val values: MutableList<String> = mutableListOf())
+
+    private val domainRegex = Regex("(?i)(?<![@/])\\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}\\b")
+    private val urlRegex = Regex("(?i)https?://[^\\s<>]+")
+    private val countdownRegex = Regex("(?i)\\b\\d+\\s*(?:d|days?)\\s+\\d+\\s*(?:h|hours?)\\s+\\d+\\s*(?:m|minutes?)\\s*(?:\\d+\\s*(?:s|seconds?))?\\b")
+    private val dateRegex = Regex("(?i)\\b(?:\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}|\\d{1,2}\\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\s+\\d{4})\\b")
+    private val boilerplate = Regex("(?i)^(?:read more|learn more|view website|visit website|share|copy link|download|subscribe|login|sign in|menu|home|search|cookie policy|privacy policy|terms of service)[.!… ]*$")
+    private val exposedTerms = Regex("(?i)\\b(?:kyc|aadhaar|pan card|passport|bank statement|bank account|financial record|loan document|loan application|customer record|crm|employee record|staff record|internal document|invoice|payment record|credit card|debit card|tax record|identity document|personal data)\\b")
+    private val statusTerms = Regex("(?i)\\b(?:status|victim status|negotiation deadline|published|pending|active|inactive|disclosed|leaked|under negotiation|notified)\\s*[:：-]")
+    private val descriptionTerms = Regex("(?i)\\b(?:description|overview|summary|about|details)\\s*[:：-]")
+    private val sizeTerms = Regex("(?i)\\b(?:size|data size|volume|total size)\\s*[:：-]")
+    private val extensionTerms = Regex("(?i)\\b(?:file types|extensions|file extensions|formats)\\s*[:：-]")
+
+    private fun clean(value: String): String = value.trim()
+        .replace(Regex("^[\\s•▪◦*\\-–—|:]+"), "")
+        .replace(Regex("[\\s|:]+$"), "")
+        .trim()
+
+    private fun add(section: Section, value: String) {
+        val item = clean(value)
+        if (item.isBlank() || boilerplate.matches(item)) return
+        if (section.values.none { it.equals(item, ignoreCase = true) }) section.values.add(item)
+    }
+
+    private fun parse(input: String): List<Section> {
+        val sections = linkedMapOf(
+            "domain" to Section("AFFECTED DOMAINS", "⌖"),
+            "url" to Section("REFERENCES", "↗"),
+            "status" to Section("STATUS", "◉"),
+            "countdown" to Section("DEADLINE COUNTDOWN", "◷"),
+            "date" to Section("DATES", "▦"),
+            "size" to Section("DATA VOLUME", "▤"),
+            "extensions" to Section("FILE TYPES", "▧"),
+            "exposed" to Section("EXPOSED DATA CATEGORIES", "▣"),
+            "description" to Section("INCIDENT DESCRIPTION", "≡"),
+            "additional" to Section("ADDITIONAL INFORMATION", "•")
+        )
+        val seenLines = mutableSetOf<String>()
+        input.lines().forEach { original ->
+            val line = clean(original)
+            if (line.isBlank() || boilerplate.matches(line)) return@forEach
+            val key = line.lowercase().replace(Regex("\\s+"), " ")
+            if (!seenLines.add(key)) return@forEach
+
+            val urls = urlRegex.findAll(line).map { it.value.trimEnd('.', ',', ')', ']', ';') }.distinct().toList()
+            urls.forEach { add(sections.getValue("url"), it) }
+
+            val domains = domainRegex.findAll(line).map { it.value.trimEnd('.', ',', ';') }
+                .filterNot { domain -> urls.any { it.contains(domain, ignoreCase = true) } }
+                .distinct().toList()
+            domains.forEach { add(sections.getValue("domain"), it) }
+
+            when {
+                countdownRegex.containsMatchIn(line) -> add(sections.getValue("countdown"), line)
+                statusTerms.containsMatchIn(line) -> add(sections.getValue("status"), line)
+                sizeTerms.containsMatchIn(line) -> add(sections.getValue("size"), line)
+                extensionTerms.containsMatchIn(line) -> add(sections.getValue("extensions"), line)
+                descriptionTerms.containsMatchIn(line) -> add(sections.getValue("description"), line)
+                exposedTerms.containsMatchIn(line) -> add(sections.getValue("exposed"), line)
+                dateRegex.containsMatchIn(line) -> add(sections.getValue("date"), line)
+                urls.isEmpty() && domains.isEmpty() -> add(sections.getValue("additional"), line)
+                else -> {
+                    val remainder = line.replace(urlRegex, "").replace(domainRegex, "").trim(' ', '-', ':', '|', '•')
+                    if (remainder.isNotBlank() && !boilerplate.matches(remainder)) add(sections.getValue("additional"), remainder)
+                }
+            }
+        }
+        return sections.values.filter { it.values.isNotEmpty() }
+    }
+
+    private fun plainSections(input: String, footer: String): String {
+        val parsed = parse(input)
+        val out = StringBuilder("◆ INCIDENT INTELLIGENCE REPORT\\n━━━━━━━━━━━━━━━━━━━━")
+        parsed.forEach { section ->
+            out.append("\\n\\n").append(section.icon).append(" ").append(section.title).append("\\n")
+            section.values.forEach { out.append("• ").append(it).append("\\n") }
+        }
+        if (footer.isNotBlank()) out.append("\\n━━━━━━━━━━━━━━━━━━━━\\n").append(footer.trim())
         return out.toString()
     }
-    fun plainPreview(text: String, footer: String): String =
-        "◆ INCIDENT INTELLIGENCE REPORT\n━━━━━━━━━━━━━━━━━━━━\n" + text +
-            if (footer.isBlank()) "" else "\n━━━━━━━━━━━━━━━━━━━━\n$footer"
+
+    private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    fun format(text: String, footer: String): String {
+        val parsed = parse(text)
+        val out = StringBuilder("<b>◆ INCIDENT INTELLIGENCE REPORT</b>\\n<code>━━━━━━━━━━━━━━━━━━━━</code>")
+        parsed.forEach { section ->
+            out.append("\\n\\n<b>").append(section.icon).append(" ").append(esc(section.title)).append("</b>\\n")
+            section.values.forEach { out.append("• ").append(esc(it)).append("\\n") }
+        }
+        if (footer.isNotBlank()) out.append("\\n<code>━━━━━━━━━━━━━━━━━━━━</code>\\n<b>").append(esc(footer.trim())).append("</b>")
+        return out.toString()
+    }
+    fun plainPreview(text: String, footer: String): String = plainSections(text, footer)
 }
