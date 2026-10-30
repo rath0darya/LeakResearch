@@ -1,7 +1,7 @@
 package com.leakresearch
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -33,7 +33,7 @@ private val ink = Color(0xFF18202B)
 private val paper = Color(0xFFF1EEE6)
 private val accent = Color(0xFFB76E39)
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val http = OkHttpClient.Builder().callTimeout(25, TimeUnit.SECONDS).build()
     private val prefs by lazy {
         val key = MasterKey.Builder(this).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build()
